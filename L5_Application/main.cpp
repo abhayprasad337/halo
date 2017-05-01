@@ -128,7 +128,7 @@ int main(void)
     #endif
 
     /** setup the motion analyzer */
-        xStartMotionAnalysis();
+    xStartMotionAnalysis();
 
     scheduler_start(); ///< This shouldn't return
     return -1;
