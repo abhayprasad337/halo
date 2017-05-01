@@ -17,4 +17,7 @@
  */
 void* xStartMotionAnalysis();
 
+int16_t moving_average_filter (int16_t *in, int16_t val, uint16_t window_size);
+int16_t calibration (int16_t *in, uint16_t cal_length);
+
 #endif /* L5_APPLICATION_MOTION_ANALYSIS_HPP_ */

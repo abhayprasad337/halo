@@ -25,8 +25,9 @@
 #include "eint3_monitoring_hw_int.hpp"
 #include "io.hpp"
 #include "storage.hpp"
-#define DUMP_FILE_NAME "0:log_%u.csv"
-#define DUMP_SW_FILE_NAME "0:log_%u_sw.csv"
+#define DUMP_FILE_NAME "1:log_%u.csv"
+#define DUMP_SW_FILE_NAME "1:log_%u_sw.csv"
+#define DUMP_CALIB_FILE_NAME "1:calib.csv"
 //remember: each log currently is 12 bytes worst case; so 30 minutes with each reading 100ms apart will be 351KB
 //#define DURATION_TO_LOG_MS (((uint64_t)(1)) * 10 * 1000)
 #define DURATION_TO_LOG_MS (((uint64_t)(30)) * 60 * 1000) //30 minutes
@@ -40,6 +41,11 @@
 //portTICK_PERIOD_MS; //each tick shall happen in these many ms
 //So our System Tick Interrupt is 1ms configTICK_RATE_HZ=1000 (which is 1 tick in 1ms)
 
+#define WINDOW_SIZE 100 // Size of window to perform moving average filtering
+#define CAL_ARR_SIZE 300 // Number of values required to calibrate -> 1 second of data
+
+
+static int IS_CALIBRATE=1;
 typedef struct
 {
     TaskHandle_t xRdAcc;
@@ -51,34 +57,76 @@ typedef struct
     SoftTimer debounceTimerSW;
     bool swLit;
 #endif /**< DUMP_ACC_VALUES */
+	int16_t sReadings[WINDOW_SIZE];
+    int16_t sSmoothenedValue;
+    int16_t sCalReadings[CAL_ARR_SIZE];
+    int16_t sCalibrationOffet;
 }tMotionAnalysis;
 
 #define THRESHOLD_AXIS_VALUE 150
+
 void taskReadAS(void* p)
 {
     tMotionAnalysis* pxMA = (tMotionAnalysis*)p;
     int16_t x=0,y=0;
+	static int counter = 0;
+    int16_t xVal;
+
+#ifdef DUMP_ACC_VALUES
+    char pcLog[TEMP_LOGGER_SZ] = {0};
+    int nCountL;
+    FRESULT fr;
+#endif /**< DUMP_ACC_VALUES */
+
     while(1)
     {
         x = AS.getX();
         y = AS.getY();
-#ifdef DUMP_ACC_VALUES
 
-        char pcLog[TEMP_LOGGER_SZ] = {0};
-        int nCountL;
-        FRESULT fr;
+
         if(!pxMA->durationToLog.expired())
         {
+#ifdef DUMP_ACC_VALUES
             nCountL = snprintf(pcLog, TEMP_LOGGER_SZ, "%d %d %d\n", (int)SoftTimer::getCurrentTimeMs(), x, y);
             LOGD("writing %s %d\n", pcLog, nCountL);
             fr = Storage::append(pxMA->pcDumpFileName, pcLog, nCountL, 0 /** append to end; create new file if req */);
             if(fr != FR_OK)
             {
                 LPC_GPIO1->FIOCLR = (1 << 8);
-                LOGD("append failed\n");
+                LOGE("append failed\n");
+            }
+#endif /**< DUMP_ACC_VALUES */
+            pxMA->sSmoothenedValue = moving_average_filter(&(pxMA->sReadings[0]),x,WINDOW_SIZE);
+            if (IS_CALIBRATE){
+            	/// Calibration phase
+            	/* Record N values and take the average of them */
+            	pxMA->sCalReadings[counter]=pxMA->sSmoothenedValue;
+            	counter++;
+            	LPC_GPIO1->FIOCLR = (1 << 0); // Calibration LED is ON
+            	if(counter > CAL_ARR_SIZE){
+            		pxMA->sCalibrationOffet = calibration(&(pxMA->sCalReadings[0]),CAL_ARR_SIZE);
+            		LPC_GPIO1->FIOSET = (1 << 0); // turn off calibration LED
+            		IS_CALIBRATE = 0;
+            		nCountL = snprintf(pcLog, TEMP_LOGGER_SZ, "%d\n", (int)(pxMA->sCalibrationOffet));
+            		fr = Storage::write(DUMP_CALIB_FILE_NAME, pcLog, nCountL, 0 /** append to end; create new file if req */);
+                    if(fr != FR_OK)
+                    {
+                        LPC_GPIO1->FIOCLR = (1 << 8);
+                        LOGE("append failed\n");
+                    }
+            	}
+            } else {
+            	/// Peform motion and slowdown detection.
+            	xVal = pxMA->sSmoothenedValue - pxMA->sCalibrationOffet;
+            	if( xVal < 0 ){
+            		// Turn on LED0
+            		LPC_GPIO1->FIOCLR = (1 << 1);
+            	} else {
+            		// Turn off  LED0
+            		LPC_GPIO1->FIOSET = (1 << 1);
+            	}
             }
         }
-#endif /**< DUMP_ACC_VALUES */
         vTaskDelay(DELAY_BETWEEN_ACC_READS_TICKS);
     }
 }
