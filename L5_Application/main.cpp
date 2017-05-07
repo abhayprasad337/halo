@@ -26,6 +26,10 @@
 #include "tasks.hpp"
 #include "examples/examples.hpp"
 
+/** HALO project */
+#include "motion_analysis.hpp"
+/**< HALO project */
+
 /**
  * The main() creates tasks or "threads".  See the documentation of scheduler_task class at scheduler_task.hpp
  * for details.  There is a very simple example towards the beginning of this class's declaration.
@@ -122,6 +126,9 @@ int main(void)
         u3.init(WIFI_BAUD_RATE, WIFI_RXQ_SIZE, WIFI_TXQ_SIZE);
         scheduler_add_task(new wifiTask(Uart3::getInstance(), PRIORITY_LOW));
     #endif
+
+    /** setup the motion analyzer */
+    xStartMotionAnalysis();
 
     scheduler_start(); ///< This shouldn't return
     return -1;
