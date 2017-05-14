@@ -14,42 +14,38 @@
 #include "event_groups.h"
 #include "timers.h"
 #include "soft_timer.hpp"
+#include "exp_halo_api.h"
 
+typedef enum
+{
+	safe=0,
+	warning=1,
+	alert=2
+}warninglevel;
 
-class US_PeriodicTrigger : public scheduler_task
+class USS_PeriodicTriggerTask : public scheduler_task
 {
 	public:
-	US_PeriodicTrigger(uint8_t priority);
+	USS_PeriodicTriggerTask(uint8_t priority);
+	USS_PeriodicTriggerTask(uint8_t priority,size_t pMsgHandler);
 	bool init(void);
     bool run(void*);
+    void runStateMachine(void);
+    size_t   MsgHandler;
+
+
 
 
 	private:
+    uint32_t mstartTime;
+    uint32_t mendTime;
+    eHalo_Mod_USS_WarningLevels mstatePrev ;
+    eHalo_Mod_USS_WarningLevels mstateCurrent ;
+    volatile uint32_t mEchoDuration;
+    volatile float mdistance;
+
     SoftTimer mxTimerPeriodicTrigger;
-    SemaphoreHandle_t mxSemaphoreTriggerSignal;
-    bool mstartTrigger;
-
+    QueueHandle_t mxUSSCmdQ;
 };
-
-class US_EchoDetect : public scheduler_task
-{
-	public:
-	US_EchoDetect(uint8_t priority);
-	bool init(void);
-    bool run(void*);
-
-
-	private:
-    uint64_t mEchoDuration;
-    uint64_t mstartTime;
-    uint64_t mendTime;
-    float mdistance;
-    SemaphoreHandle_t mxSemaphoreWarningL1;
-    SemaphoreHandle_t mxSemaphoreTriggeredSignal;
-    SemaphoreHandle_t mxSemaphoreEchoRcvdSignal;
-    EventGroupHandle_t maliveEchoDetect;
-
-};
-
 
 #endif /* L5_APPLICATION_SOURCE_ULTRASONIC_SENSOR_INTERFACE_HPP_ */

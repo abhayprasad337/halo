@@ -25,138 +25,156 @@
 #include "L2_Drivers/eint_assignment.h"
 #include "utilities.h"
 #include "lpc_sys.h"
+#include "L2_Drivers/eint.h"
 
 /* Macro declration*/
-#define TRIGGER_CYCLE pdMS_TO_TICKS(100)
-#define CALCULATE_DISTANCE(duration)  ((duration/2000)*330);
+#define TRIGGER_CYCLE                 200                                   /*Trigger cycle for USS */
+#define CALCULATE_DISTANCE(duration)  (((float)duration*(float)(0.034/2)))  /* 340 m/s , so 0.034 cm per us*/
 
+static uint32_t pulseEndTime=0;
+static uint32_t pulseStartTime=0;
 
-/*C functions*/
+/*C EINT ISR functions*/
 extern "C"
 {
-   void echo_irq_callback(void)
+   void echo_raising_irq_callback(void)
    {
-	   long yieldRequired = 0;
-       if(xSemaphoreGiveFromISR(scheduler_task::getSharedObject(shared_ultrasonicEchoSemaphore),&yieldRequired) !=0 )
-       u0_dbg_printf("echo_irq_callback - Semaphore Give \n ");
-	   //portYIELD_FROM_ISR(yieldRequired);
+	   u0_dbg_printf("\n 1.echo_raising_irq_callback \n ");
+	   pulseStartTime=(unsigned int)sys_get_uptime_us();
    }
 
+   void echo_falling_irq_callback(void)
+     {
+  	   pulseEndTime=(unsigned int)sys_get_uptime_us();
+  	   u0_dbg_printf("\n 2.Send end time to Queue \n ");
+  	   if(NULL != scheduler_task::getSharedObject(shared_ultrasonicTimerQueue))
+  	   {
+  		   xQueueSendFromISR(scheduler_task::getSharedObject(shared_ultrasonicTimerQueue),&pulseEndTime,NULL);
+  	   }
+
+  	 }
+
 }
 
-/*Global function declaration*/
-void PeriodicTriggerCallback(void*);
 
 /*Member function definition*/
-US_PeriodicTrigger::US_PeriodicTrigger(uint8_t priority) : scheduler_task("usTrigger",512*2,priority),
-		                                                   mxSemaphoreTriggerSignal(NULL),
-														   mstartTrigger(false)
+USS_PeriodicTriggerTask::USS_PeriodicTriggerTask(uint8_t priority,size_t pMsgHandler) : scheduler_task("USSTrigger",512*8,priority),MsgHandler(pMsgHandler),
+                                                                   mstartTime(0),
+																   mendTime(0),
+																   mstatePrev(kHalo_Mod_USS_WL_Safe),
+																   mstateCurrent(kHalo_Mod_USS_WL_Safe),
+																   mEchoDuration(0),
+																   mdistance(0),
+																   mxUSSCmdQ(NULL)
 {
-	mxTimerPeriodicTrigger.reset(100);
+	mxTimerPeriodicTrigger.reset(TRIGGER_CYCLE);
 }
 
-bool US_PeriodicTrigger::init(void)
+USS_PeriodicTriggerTask::USS_PeriodicTriggerTask(uint8_t priority):scheduler_task("USS_Default_Trigger",512*8,priority),MsgHandler(0),
+		                                                                   mstartTime(0),
+																		   mendTime(0),
+																		   mstatePrev(kHalo_Mod_USS_WL_Safe),
+																		   mstateCurrent(kHalo_Mod_USS_WL_Safe),
+																		   mEchoDuration(0),
+																		   mdistance(0),
+																		   mxUSSCmdQ(NULL)
 {
-	//u0_dbg_printf("\n US_PeriodicTrigger init \n");
+	mxTimerPeriodicTrigger.reset(TRIGGER_CYCLE);
+}
 
-	configurePortPin(2,3,gpio,output,pulldown,pushpull);              //Configure P2.3 as output in push-pull mode
-	LPC_GPIO2->FIOCLR= (1 << 3);
+bool USS_PeriodicTriggerTask::init(void)
+{
+	u0_dbg_printf("\n US_PeriodicTrigger init \n");
 
-#if 0
-	mxTimerPeriodicTrigger = xTimerCreate("us_trigger", TRIGGER_CYCLE , pdTRUE , NULL , PeriodicTriggerCallback);
-    if(NULL != mxTimerPeriodicTrigger)
-    {
-    	mstartTrigger = xTimerStart(mxTimerPeriodicTrigger,40);
-    }
-#endif
-
-	mxSemaphoreTriggerSignal = xSemaphoreCreateBinary();
-	if(NULL!= mxSemaphoreTriggerSignal)
+	/*Create Queue to receive command from EINT3 ISR to calculate Echo pulse width*/
+	mxUSSCmdQ = xQueueCreate(1,sizeof(uint32_t));
+	if(NULL!= mxUSSCmdQ)
 	{
-		addSharedObject(shared_ultrasonicTrigSemaphore,mxSemaphoreTriggerSignal);
+		addSharedObject(shared_ultrasonicTimerQueue,mxUSSCmdQ);
 	}
-	return (NULL != mxSemaphoreTriggerSignal);
+
+	/*Configure P2.3 as output to send Trigger pulse to USS Trigger pin*/
+	configurePortPin(2,3,gpio,output,pulldown,pushpull);
+
+	LPC_GPIO2->FIOCLR= SET_2BIT_POS(7,3);
+	//LPC_GPIO2->FIOCLR= (1 << 3);
+	//LPC_GPIO2->FIOCLR= (1 << 4);
+	//LPC_GPIO2->FIOCLR= (1 << 5);
+
+	/*Register P2.4 & P2.5 for EINT3 Interrupt for rising and falling edge to measure echo pulse width */
+	eint3_enable_port2(5,eint_rising_edge,echo_raising_irq_callback);
+	eint3_enable_port2(4,eint_falling_edge,echo_falling_irq_callback);
+
+	return (NULL != mxUSSCmdQ);
 }
 
 
-bool US_PeriodicTrigger::run(void* p)
+bool USS_PeriodicTriggerTask::run(void* p)
 {
+	tHalo_Msg US_Msg = {kHalo_MsgSrc_Mod_USS,kHalo_Mod_USS_WL_Safe};
+
 	if(mxTimerPeriodicTrigger.expired())
 	{
-		//u0_dbg_printf("\n US_PeriodicTrigger expired\n");
-		PeriodicTriggerCallback(NULL);
+		u0_dbg_printf("\n 0.US_PeriodicTriggerTimer expired\n");
+
+		LPC_GPIO2->FIOSET= (1 << 3);
+		delay_us(10);
+		LPC_GPIO2->FIOCLR= (1 << 3);
+
+		if(xQueueReceive(mxUSSCmdQ,&(USS_PeriodicTriggerTask::mendTime),portMAX_DELAY))
+		{
+        	u0_dbg_printf("\n 4.Received start & End time ");
+			mEchoDuration = pulseEndTime - pulseStartTime;
+		    mdistance= CALCULATE_DISTANCE(mEchoDuration);
+		    runStateMachine();
+		    US_Msg.xUSS.xnWL = mstateCurrent ;
+
+		    if(gHalo_MHI_BroadCast(MsgHandler, &US_Msg))
+		    {
+		    	u0_dbg_printf("\n 5.gHalo_MHI_BroadCast ");
+		    }
+		}
+
+		u0_dbg_printf("\n 6.Duration calculated = %ld "
+						"\n Distance = %f \n start=%ld \n end=%ld \n ",mEchoDuration,mdistance,pulseStartTime,pulseEndTime);
+
 		mxTimerPeriodicTrigger.restart();
-		//mstartTrigger = xTimerStart(mxTimerPeriodicTrigger,40);
 	}
 
 	return true;
 }
 
-
-void PeriodicTriggerCallback(void* p)
+void USS_PeriodicTriggerTask::runStateMachine(void)
 {
-	//u0_dbg_printf("\n US_PeriodicTrigger Callback \n");
-	LPC_GPIO2->FIOSET= (1 << 3);
-	delay_ms(10);
-	LPC_GPIO2->FIOCLR= (1 << 3);
-	xSemaphoreGive(scheduler_task::getSharedObject(shared_ultrasonicTrigSemaphore));
+	mstatePrev= mstateCurrent;
+
+	if( mdistance < 200 )
+	{
+		mstateCurrent = kHalo_Mod_USS_WL_Critical;
+
+		//Send it to Task
+		u0_dbg_printf("\n Critical !");
+
+	}
+	else if( mdistance >= 200 && mdistance <= 400 )
+	{
+		mstateCurrent = kHalo_Mod_USS_WL_Warning;
+
+		u0_dbg_printf("\n warning !");
+	}
+	else if (mdistance > 400 )
+	{
+		mstateCurrent = kHalo_Mod_USS_WL_Safe;
+		u0_dbg_printf("\n safe !");
+
+	}
 }
 
-
-
-US_EchoDetect::US_EchoDetect(uint8_t priority) : scheduler_task("usEchoDetect",512*3,priority),mEchoDuration(0),
-		                                         mstartTime(0),
-												 mendTime(0),
-												 mdistance(0),
-		                                         mxSemaphoreWarningL1(NULL),
-		                                         mxSemaphoreTriggeredSignal(NULL),
-		                                         mxSemaphoreEchoRcvdSignal(NULL),
-												 maliveEchoDetect(NULL)
+size_t gHalo_USS_Init(tHalo_Ctx* axpHCtx)
 {
-}
-
-bool US_EchoDetect::init(void)
-{
-	u0_dbg_printf("\n US_EchoDetect init \n");
-	gpio_interrupt_register (2 ,4 , rising ,echo_irq_callback );      //Configure P2.4 for Raising edge interrupt
-
-	mxSemaphoreWarningL1 = xSemaphoreCreateBinary();
-	maliveEchoDetect = xEventGroupCreate();
-	mxSemaphoreEchoRcvdSignal = xSemaphoreCreateBinary();
-
-	if(NULL!= mxSemaphoreWarningL1)
-	{
-		addSharedObject(shared_ultrasonicWarnSemaphore,mxSemaphoreWarningL1);
-	}
-
-	if(NULL!= mxSemaphoreEchoRcvdSignal)
-	{
-			addSharedObject(shared_ultrasonicEchoSemaphore,mxSemaphoreEchoRcvdSignal);
-	}
-
-	return ((NULL!= mxSemaphoreEchoRcvdSignal) && (NULL != mxSemaphoreWarningL1) &&(NULL !=maliveEchoDetect));
-
-}
-
-bool US_EchoDetect::run(void* p)
-{
-	//u0_dbg_printf("\n US_EchoDetect run \n");
-
-	if(xSemaphoreTake(getSharedObject(shared_ultrasonicTrigSemaphore),portMAX_DELAY) !=0 )
-	{
-	   u0_dbg_printf("shared_ultrasonicTrigSemaphore - Semaphore Taken \n ");
-	   mstartTime = sys_get_uptime_ms();
-	}
-
-	if(xSemaphoreTake(mxSemaphoreEchoRcvdSignal,portMAX_DELAY) !=0 )
-	{
-		mendTime = sys_get_uptime_ms();
-		mEchoDuration = mendTime - mstartTime;
-		mdistance=CALCULATE_DISTANCE(mEchoDuration)
-		u0_dbg_printf("shared_ultrasonicEchoSemaphore - Semaphore Taken \n Duration calculated = %d \n Distance = %f \n ",mEchoDuration,mdistance);
-	}
-	return 1;
-
+	USS_PeriodicTriggerTask* USS_Handler = new USS_PeriodicTriggerTask(PRIORITY_HIGH, axpHCtx->xhMHI );
+	scheduler_add_task(USS_Handler);
+	return (size_t)USS_Handler;
 }
 
 
