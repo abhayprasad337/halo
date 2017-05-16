@@ -17,7 +17,7 @@
  * 6) The Wireless Channel Interface                    (WCI)
  * [Vishal]
  */
-/** 
+/**
  * @brief This enum specifies all the possible sources
  * for a @tHalo_Msg object in the system
  */
@@ -35,12 +35,13 @@ typedef enum
  */
 typedef enum
 {
+        kHalo_Mod_USS_WL_Safe,
         kHalo_Mod_USS_WL_Warning, /**< Range: [2m, 5m] : 2m < current_displacement <= 5m */
         kHalo_Mod_USS_WL_Critical /**< Range: [0m, 2m] */
 }eHalo_Mod_USS_WarningLevels;
 
 /**
- * @brief This enum describes the Motion Analyzer Engine's 
+ * @brief This enum describes the Motion Analyzer Engine's
  * observed events about the bike's motion
  */
 typedef enum
@@ -94,9 +95,9 @@ typedef struct
 }tHalo_Mod_UserIO;
 
 /**
- * @brief This object shall encapsulate 
+ * @brief This object shall encapsulate
  * a general structure type that any module shall generate
- * to use gHalo_MHI_* APIs 
+ * to use gHalo_MHI_* APIs
  */
 typedef struct
 {
@@ -141,7 +142,7 @@ size_t gHalo_UIO_Init(tHalo_Ctx* axpHCtx);
 /** @{ ADA API */
 /**
  * @brief Initialize ADA module
- */ 
+ */
 size_t gHalo_ADA_Init(tHalo_Ctx* axpHCtx);
 /**
  * @brief This API shall synchronously display the supplied
@@ -154,7 +155,7 @@ size_t gHalo_ADA_Show(size_t axhADA, tHalo_Msg* axpMsg);
 /** @{ WCI API */
 /**
  * @brief Initialize WCI module
- */ 
+ */
 size_t gHalo_WCI_Init(tHalo_Ctx* axpHCtx);
 /**
  * @brief This API shall synchronously send out the supplied
