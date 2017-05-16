@@ -44,7 +44,7 @@ typedef struct {
 sh_data dat={0};
 void isr_func(void)
 {
-    tHalo_Msg Uio_msg={0};
+    tHalo_Msg Uio_msg;
     Uio_msg.xnSrc = kHalo_MsgSrc_Mod_UIO;
     Uio_msg.xUIO.xnEV = kHalo_Mod_UIO_EV_Left;
     long yield = 0;
@@ -63,7 +63,7 @@ void isr_func(void)
 }
 void isr_func1(void)
 {
-    tHalo_Msg Uio_msg1={0};
+    tHalo_Msg Uio_msg1;
     Uio_msg1.xnSrc = kHalo_MsgSrc_Mod_UIO;
     Uio_msg1.xUIO.xnEV = kHalo_Mod_UIO_EV_Right;
     long yield = 0;
@@ -85,7 +85,7 @@ class halo_led:public scheduler_task
 {
         size_t xhUIO;
     public:
-        halo_led(uint8_t priority, tHalo_Msg* Uio):scheduler_task("led_task", 512, priority), xhUIO(Uio)
+        halo_led(uint8_t priority, size_t xUio):scheduler_task("led_task", 512, priority), xhUIO(xUio)
     {
             // initialise led and switch gpio pin
             LPC_GPIO2->FIODIR |= (0x1 << 8);
