@@ -21,6 +21,8 @@
  * @brief This is the application entry point.
  */
 
+//#define DEBUG_E
+#include "debug_e.h"
 #include <stdio.h>
 #include "utilities.h"
 #include <FreeRTOS.h>
@@ -52,16 +54,18 @@ void isr_func(void)
     Uio_msg.xUIO.xnEV = kHalo_Mod_UIO_EV_Left;
     long yield = 0;
     // give semaphore to the switch_function
-    if(xSemaphoreGiveFromISR(dat.sem, &yield))
     {
         t1.reset(200);
         /* Process the interrupt */
-        while(!t1.expired());
+        //while(!t1.expired());
         LPC_GPIO2->FIOPIN ^= (0x1 << 8); // turning on left side led
         // send this message to the queue.
-        xQueueSend(dat.qh, &Uio_msg, 0);
+        xQueueSendFromISR(dat.qh, &Uio_msg, &yield);
         // yielding interrupt service routine
-        portYIELD_FROM_ISR(yield);
+        if(yield)
+        {
+            portYIELD_FROM_ISR(yield);
+        }
     }
 }
 void isr_func1(void)
@@ -71,24 +75,25 @@ void isr_func1(void)
     Uio_msg1.xUIO.xnEV = kHalo_Mod_UIO_EV_Right;
     long yield = 0;
     // give semaphore to the switch_function
-    if(xSemaphoreGiveFromISR(dat.sem1, &yield))
     {
         t1.reset(200);
         /* Process the interrupt */
-        while(!t1.expired());
+        //while(!t1.expired());
         // yielding interrupt service routine
         LPC_GPIO2->FIOPIN ^= (0x1 << 9);
 
         // send this message to the queue
-        xQueueSend(dat.qh, &Uio_msg1, 0);
-        portYIELD_FROM_ISR(yield);
+        LOGD("DEBUGME\n");
+        xQueueSendFromISR(dat.qh, &Uio_msg1, &yield);
+        if(yield)
+            portYIELD_FROM_ISR(yield);
     }
 }
 class halo_led:public scheduler_task
 {
-        size_t xhUIO;
+        size_t xhMHI;
     public:
-        halo_led(uint8_t priority, size_t xUio):scheduler_task("led_task", 512, priority), xhUIO(xUio)
+        halo_led(uint8_t priority, size_t xUio):scheduler_task("led_task", 512 * 4, priority), xhMHI(xUio)
     {
             // initialise led and switch gpio pin
             LPC_GPIO2->FIODIR |= (0x1 << 8);
@@ -129,7 +134,7 @@ class halo_led:public scheduler_task
             xQueueReceive(dat.qh, &Uio_msg, portMAX_DELAY);
 
             // send the response to the Message Handler
-            gHalo_MHI_BroadCast(xhUIO, &Uio_msg);
+            gHalo_MHI_BroadCast(xhMHI, &Uio_msg);
 
             return true;
         }
@@ -139,7 +144,7 @@ class halo_led:public scheduler_task
 /** @{ UIO API */
 size_t gHalo_UIO_Init(tHalo_Ctx* axpHCtx)
 {
-    scheduler_add_task(new halo_led(PRIORITY_MEDIUM, axpHCtx->xhUIO));
+    scheduler_add_task(new halo_led(PRIORITY_MEDIUM, axpHCtx->xhMHI));
 
     return 1;
 }

@@ -30,7 +30,7 @@ class USS_PeriodicTriggerTask : public scheduler_task
 	USS_PeriodicTriggerTask(uint8_t priority,size_t pMsgHandler);
 	bool init(void);
     bool run(void*);
-    void runStateMachine(void);
+    bool runStateMachine(void);
     size_t   MsgHandler;
 
 

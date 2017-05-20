@@ -28,22 +28,6 @@ typedef struct
 }tHalo_WCI;
 
 
-/** @{ WCI API */
-/**
- * @brief Initialize WCI module
- */
-size_t gHalo_WCI_Init(tHalo_Ctx* axpHCtx);
-
-
-/**
- * @brief This API shall synchronously send out the supplied
- * tMsg* object
- * @param axpMsg[IN] the message to be sent to the remote
- */
-size_t gHalo_WCI_SendMsg(size_t axhWCI, tHalo_Msg* axpMsg);
-/** @} WCI API */
-
-
 class WCI_rcv : public scheduler_task
 {
 

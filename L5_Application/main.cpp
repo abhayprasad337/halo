@@ -27,7 +27,14 @@
 #include "examples/examples.hpp"
 
 /** HALO project */
-#include "motion_analysis.hpp"
+//#include "motion_analysis.hpp"
+#include "exp_halo_api.h"
+#define VERBOSE_E
+#include "debug_e.h"
+#define HALO_TX
+#ifndef HALO_TX
+#define HALO_RX
+#endif
 /**< HALO project */
 
 /**
@@ -128,7 +135,13 @@ int main(void)
     #endif
 
     /** setup the motion analyzer */
-    xStartMotionAnalysis();
+    //xStartMotionAnalysis();
+    LOGV("Init HALO\n");
+#ifdef HALO_TX
+    gHalo_Init(kHalo_BoardID_Tx);
+#else
+    gHalo_Init(kHalo_BoardID_Rx);
+#endif
 
     scheduler_start(); ///< This shouldn't return
     return -1;

@@ -21,7 +21,7 @@
  *
  */
 
-size_t gHalo_WCI_SendMsg(size_t axhWCI, tHalo_Msg* axpMsg)
+bool gHalo_WCI_SendMsg(size_t axhWCI, tHalo_Msg* axpMsg)
 {
 	mesh_packet_t pkt;
 	tHalo_WCI *xhWCI = (tHalo_WCI *)axhWCI;
@@ -35,7 +35,7 @@ size_t gHalo_WCI_SendMsg(size_t axhWCI, tHalo_Msg* axpMsg)
 		wireless_send_formed_pkt(&pkt);
 	}
 
-	return axhWCI;
+	return true; /**< TODO implement failure condition */
 }
 
 

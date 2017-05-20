@@ -17,9 +17,12 @@
  *
  * @threshold        : If the distance is less than 1m, Turn on indicators
  */
+
+//#define DEBUG_E
+#define VERBOSE_E
+#include "debug_e.h"
 #include <stdio.h>
 #include "ultrasonic_sensor_interface.hpp"
-#include "printf_lib.h"
 #include "shared_handles.h"
 #include "L0_LowLevel/source/gpio.h"
 #include "L2_Drivers/eint_assignment.h"
@@ -29,27 +32,41 @@
 
 /* Macro declration*/
 #define TRIGGER_CYCLE                 200                                   /*Trigger cycle for USS */
-#define CALCULATE_DISTANCE(duration)  (((float)duration*(float)(0.034/2)))  /* 340 m/s , so 0.034 cm per us*/
+#define CALCULATE_DISTANCE(duration)  (((float)duration*(float)(0.034/2)))  /* 340 m/s = 34000cm / 10^6 ms = 0. , so 0.034 cm per us*/
 
 static uint32_t pulseEndTime=0;
 static uint32_t pulseStartTime=0;
+static int gotRising = 0;
+static int sentTrigger = 0;
 
 /*C EINT ISR functions*/
 extern "C"
 {
    void echo_raising_irq_callback(void)
    {
-	   u0_dbg_printf("\n 1.echo_raising_irq_callback \n ");
+	   LOGD("\n 1.echo_raising_irq_callback \n ");
 	   pulseStartTime=(unsigned int)sys_get_uptime_us();
+	   gotRising++;
+	   LOGV("DEBUGME\n");
    }
+
 
    void echo_falling_irq_callback(void)
      {
+       long yield = 0;
   	   pulseEndTime=(unsigned int)sys_get_uptime_us();
-  	   u0_dbg_printf("\n 2.Send end time to Queue \n ");
+  	   LOGD("\n 2.Send end time to Queue \n ");
   	   if(NULL != scheduler_task::getSharedObject(shared_ultrasonicTimerQueue))
   	   {
-  		   xQueueSendFromISR(scheduler_task::getSharedObject(shared_ultrasonicTimerQueue),&pulseEndTime,NULL);
+  	       LOGV("DEBUGME\n");
+  	       if(gotRising > 1)
+  	       {
+  	           gotRising = 0;
+  	           xQueueSendFromISR(scheduler_task::getSharedObject(shared_ultrasonicTimerQueue),&pulseEndTime, &yield);
+  	           LOGV("DEBUGME\n");
+  	           if(yield)
+  	               portYIELD_FROM_ISR(yield);
+  	       }
   	   }
 
   	 }
@@ -84,7 +101,7 @@ USS_PeriodicTriggerTask::USS_PeriodicTriggerTask(uint8_t priority):scheduler_tas
 
 bool USS_PeriodicTriggerTask::init(void)
 {
-	u0_dbg_printf("\n US_PeriodicTrigger init \n");
+	LOGD("\n US_PeriodicTrigger init \n");
 
 	/*Create Queue to receive command from EINT3 ISR to calculate Echo pulse width*/
 	mxUSSCmdQ = xQueueCreate(1,sizeof(uint32_t));
@@ -113,38 +130,47 @@ bool USS_PeriodicTriggerTask::run(void* p)
 {
 	tHalo_Msg US_Msg = {kHalo_MsgSrc_Mod_USS,kHalo_Mod_USS_WL_Safe};
 
-	if(mxTimerPeriodicTrigger.expired())
+	//if(mxTimerPeriodicTrigger.expired())
 	{
-		u0_dbg_printf("\n 0.US_PeriodicTriggerTimer expired\n");
+		LOGD("\n 0.US_PeriodicTriggerTimer expired\n");
 
 		LPC_GPIO2->FIOSET= (1 << 3);
 		delay_us(10);
 		LPC_GPIO2->FIOCLR= (1 << 3);
+		sentTrigger = 1;
 
 		if(xQueueReceive(mxUSSCmdQ,&(USS_PeriodicTriggerTask::mendTime),portMAX_DELAY))
 		{
-        	u0_dbg_printf("\n 4.Received start & End time ");
+        	LOGV("4.Received start & End time %d %d\n", pulseEndTime, pulseStartTime);
 			mEchoDuration = pulseEndTime - pulseStartTime;
+			LOGV("duration = %d\n", mEchoDuration);
 		    mdistance= CALCULATE_DISTANCE(mEchoDuration);
-		    runStateMachine();
-		    US_Msg.xUSS.xnWL = mstateCurrent ;
-
-		    if(gHalo_MHI_BroadCast(MsgHandler, &US_Msg))
+		    LOGV("new distance = %fcm\n", mdistance);
+		    if(runStateMachine())
 		    {
-		    	u0_dbg_printf("\n 5.gHalo_MHI_BroadCast ");
+
+		        US_Msg.xUSS.xnWL = mstateCurrent ;
+
+		        LOGD("BCAST\n");
+		        if(gHalo_MHI_BroadCast(MsgHandler, &US_Msg))
+		        {
+		            LOGD("\n 5.gHalo_MHI_BroadCast success ");
+		        }
 		    }
 		}
 
-		u0_dbg_printf("\n 6.Duration calculated = %ld "
+		LOGD("\n 6.Duration calculated = %ld "
 						"\n Distance = %f \n start=%ld \n end=%ld \n ",mEchoDuration,mdistance,pulseStartTime,pulseEndTime);
 
 		mxTimerPeriodicTrigger.restart();
+		vTaskDelay(TRIGGER_CYCLE);
 	}
 
 	return true;
 }
 
-void USS_PeriodicTriggerTask::runStateMachine(void)
+/** return true only for state transitions */
+bool USS_PeriodicTriggerTask::runStateMachine(void)
 {
 	mstatePrev= mstateCurrent;
 
@@ -153,20 +179,28 @@ void USS_PeriodicTriggerTask::runStateMachine(void)
 		mstateCurrent = kHalo_Mod_USS_WL_Critical;
 
 		//Send it to Task
-		u0_dbg_printf("\n Critical !");
+		LOGD("\n Critical !");
 
 	}
 	else if( mdistance >= 200 && mdistance <= 400 )
 	{
 		mstateCurrent = kHalo_Mod_USS_WL_Warning;
 
-		u0_dbg_printf("\n warning !");
+		LOGD("\n warning !");
 	}
 	else if (mdistance > 400 )
 	{
 		mstateCurrent = kHalo_Mod_USS_WL_Safe;
-		u0_dbg_printf("\n safe !");
+		LOGD("\n safe !");
 
+	}
+	if(mstatePrev != mstateCurrent)
+	{
+	    return true;
+	}
+	else
+	{
+	    return false;
 	}
 }
 

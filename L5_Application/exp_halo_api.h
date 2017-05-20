@@ -1,3 +1,5 @@
+#ifndef __EXP_HALO_API_H__
+#define __EXP_HALO_API_H__
 #include <stddef.h>
 
 /**
@@ -17,7 +19,7 @@
  * 6) The Wireless Channel Interface                    (WCI)
  * [Vishal]
  */
-/**
+/** 
  * @brief This enum specifies all the possible sources
  * for a @tHalo_Msg object in the system
  */
@@ -25,8 +27,7 @@ typedef enum
 {
         kHalo_MsgSrc_Mod_USS, /**< from Ultra Sound */
         kHalo_MsgSrc_Mod_MAE, /**< from MAE */
-        kHalo_MsgSrc_Mod_UIO, /**< from UIO */
-        kHalo_MsgSrc_Mod_ADA  /**< from ADA */
+        kHalo_MsgSrc_Mod_UIO /**< from UIO */
 }eHalo_MsgSrc;
 
 /**
@@ -41,11 +42,12 @@ typedef enum
 }eHalo_Mod_USS_WarningLevels;
 
 /**
- * @brief This enum describes the Motion Analyzer Engine's
+ * @brief This enum describes the Motion Analyzer Engine's 
  * observed events about the bike's motion
  */
 typedef enum
 {
+        kHalo_Mod_MAE_EV_Invalid = -1,
         kHalo_Mod_MAE_EV_Moving,
         kHalo_Mod_MAE_EV_Stopping,
         kHalo_Mod_MAE_EV_Stopped
@@ -95,9 +97,9 @@ typedef struct
 }tHalo_Mod_UserIO;
 
 /**
- * @brief This object shall encapsulate
+ * @brief This object shall encapsulate 
  * a general structure type that any module shall generate
- * to use gHalo_MHI_* APIs
+ * to use gHalo_MHI_* APIs 
  */
 typedef struct
 {
@@ -117,13 +119,20 @@ typedef struct
     size_t xhMAE;
     size_t xhUIO;
     size_t xhADA;
+    size_t xhWCI;
     eHalo_BoardID xnBoardID;
 }tHalo_Ctx;
 
-tHalo_Ctx* gHalo_Init();
+tHalo_Ctx* gHalo_Init(eHalo_BoardID axnBoardID);
 
 /** @{ API to use the Message Handler Interface */
 size_t gHalo_MHI_Init(tHalo_Ctx* axpHCtx);
+/**
+ * @brief This API shall block until the message is delivered to
+ * the corresponding MHI queue
+ * @param axhMHI[IN] MHI handle
+ * @param axpMsg[IN] The Halo Msg
+ */
 bool gHalo_MHI_BroadCast(size_t axhMHI, tHalo_Msg* axpMsg);
 /** @} API to use the Message Handler Interface */
 
@@ -142,25 +151,26 @@ size_t gHalo_UIO_Init(tHalo_Ctx* axpHCtx);
 /** @{ ADA API */
 /**
  * @brief Initialize ADA module
- */
+ */ 
 size_t gHalo_ADA_Init(tHalo_Ctx* axpHCtx);
 /**
  * @brief This API shall synchronously display the supplied
  * tMsg* object on the Alert Display Array module
  * @param axpMsg[IN] the message to be parsed for Alert Display
  */
-size_t gHalo_ADA_Show(size_t axhADA, tHalo_Msg* axpMsg);
+bool gHalo_ADA_Show(size_t axhADA, tHalo_Msg* axpMsg);
 /** @} ADA API */
 
 /** @{ WCI API */
 /**
  * @brief Initialize WCI module
- */
+ */ 
 size_t gHalo_WCI_Init(tHalo_Ctx* axpHCtx);
 /**
  * @brief This API shall synchronously send out the supplied
  * tMsg* object
  * @param axpMsg[IN] the message to be sent to the remote
  */
-size_t gHalo_WCI_SendMsg(size_t axhWCI, tHalo_Msg* axpMsg);
+bool gHalo_WCI_SendMsg(size_t axhWCI, tHalo_Msg* axpMsg);
 /** @} WCI API */
+#endif /**< __EXP_HALO_API_H__ */

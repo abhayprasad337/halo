@@ -54,7 +54,7 @@ typedef struct
 void taskReadAS(void* p)
 {
     tMotionAnalysis* pxMA = (tMotionAnalysis*)p;
-    int16_t x=0,y=0;
+    int16_t x=0;
     int16_t x_after_cal=0;
 	static int counter = 0;
     int16_t xVal;
@@ -79,9 +79,7 @@ void taskReadAS(void* p)
      * Weak thresholds that help to
      * determine state of the subject.
      */
-    int16_t T_ismoving = 20;
     int16_t T_isSlowDown = -10;
-    int16_t T_isMovingFromSlowDown = 40;
     int16_t T_remov_from_stuck = 1000;
     int16_t T_ismoving_from_stop = 20;
 
@@ -100,11 +98,7 @@ void taskReadAS(void* p)
     int16_t definitly_settled = 5;
     int16_t definitely_out_of_stop = 2;
 
-    eHalo_Mod_MAE_Event myEvent;
-
-    uint8_t confidence_moving = 0;
-    uint8_t confidence_stop = 0;
-    int16_t previous_acceleration = 0;
+    eHalo_Mod_MAE_Event myEvent = kHalo_Mod_MAE_EV_Invalid;
 
 
     while(1)
@@ -253,11 +247,18 @@ void taskReadAS(void* p)
 
 
     		if(previous_state != state){
-    			tHalo_Msg* myMsg;
-    			myMsg->xnSrc = kHalo_MsgSrc_Mod_MAE;
-    			myMsg->xMAE.xnEV = myEvent;
-
-    			gHalo_MHI_BroadCast(pxMA->xpHCtx->xhMHI, myMsg);
+    			tHalo_Msg myMsg;
+    			myMsg.xnSrc = kHalo_MsgSrc_Mod_MAE;
+    			myMsg.xMAE.xnEV = myEvent;
+    			LOGD("DEBUGME\n");
+    			if(!gHalo_MHI_BroadCast(pxMA->xpHCtx->xhMHI, &myMsg))
+    			{
+    			    LOGE("BCAST ERR!\n");
+    			}
+    			else
+    			{
+    			    LOGV("BCAST SUCCESS\n");
+    			}
     			previous_state = state;
 
 
@@ -278,7 +279,7 @@ size_t gHalo_MAE_Init(tHalo_Ctx* axpHCtx){
 	/** Create motion analysis object */
 	tMotionAnalysis* pxMA = (tMotionAnalysis*)calloc(1, sizeof(tMotionAnalysis));
 	if(!pxMA)
-	        return NULL;
+	        return (size_t)NULL;
 
 	/** Object to share resources with glue logic */
 	pxMA->xpHCtx = axpHCtx;

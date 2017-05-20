@@ -16,6 +16,18 @@
  */
 
 
+/**
+ * Connections to external components
+ *
+ * P1.28 - Buzzer
+ * P1.29 - Left indicator
+ * P1.30 - Right indicator
+ *
+ * P2.6 - Ultrasound buzzer
+ *
+ */
+
+#include "debug_e.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "uart0_min.h"
@@ -31,7 +43,7 @@
 #include "LPC17xx.h"
 #include "lpc_sys.h"
 #include "soft_timer.hpp"
-
+#include "lpc_pwm.hpp"
 
 /*
  * Hardware configuration of
@@ -42,18 +54,16 @@
 #define CENTRAL_LED_CONTROL_GPIO 1
 #define RIGHT_LED_CONTROL_GPIO   4
 
+
 #define BLINK_MOVING 100
 #define BLINK_SLOW_DOWN 500
-#define BLINK_STOP 1000
+#define BLINK_STOP 1
 
 
 static bool IS_LEFT_SET =  0;
 static bool IS_RIGHT_SET =  0;
 
-volatile uint32_t toBlink;
-volatile uint16_t blinkSpeed;
-
-
+static uint16_t blinkSpeed=BLINK_STOP;
 
 inline void trigger_moving(){
 	blinkSpeed = BLINK_MOVING;
@@ -67,11 +77,33 @@ inline void trigger_stopped(){
 	blinkSpeed = BLINK_STOP;
 }
 
+
+PWM pwm2(PWM::pwm2, 50);
+
+void buzz_warning(){
+	pwm2.set(0.5);
+	delay_ms(50);
+	pwm2.set(0);
+}
+
+void buzz_critical(){
+	pwm2.set(90);
+	delay_ms(1000);
+	pwm2.set(0);
+}
+
+
 /**
  * Soft timer to blink indicator for
  * x time ticks
  */
 SoftTimer St_blinkIndicator(1000);
+
+typedef struct{
+  tHalo_Ctx * xpCtx;
+  uint32_t indicators;
+  uint16_t blinkSpeed;
+}adaUnit_t;
 
 
 void trigger_left(){
@@ -88,25 +120,15 @@ void trigger_right(){
 
 
 
-typedef struct{
-  tHalo_Ctx * xpCtx;
-  uint32_t indicators;
-  uint16_t blinkSpeed;
-}adaUnit_t;
-
-
-
-
-
 /*
  * Basic framework of function to blink
  * LEDs for indicators
  */
 void blinkMe(uint32_t blinkThisPin){
 	LPC_GPIO1->FIOCLR = blinkThisPin;
-	delay_ms(1000);
+	delay_ms(50);
 	LPC_GPIO1->FIOSET = blinkThisPin;
-	delay_ms(1000);
+	delay_ms(50);
 }
 
 /**
@@ -163,13 +185,14 @@ void doBlinkMotion(void *p){
 	}
 }
 
+
 /**
  * Initialize ADA unit.
  */
 size_t gHalo_ADA_Init(tHalo_Ctx* axpHCtx){
 	adaUnit_t * pxADA = (adaUnit_t*) calloc (1,sizeof(adaUnit_t));
 	if (!pxADA)
-		return NULL;
+		return (size_t)NULL;
 
 	pxADA->xpCtx = axpHCtx;
 
@@ -180,7 +203,7 @@ size_t gHalo_ADA_Init(tHalo_Ctx* axpHCtx){
 	 * Two tasks, one for indicator and other for displaying
 	 * the motion of the cyclist.
 	 */
-	xTaskCreate(doBlinkIndicator,"ADA_IND_CONTROL",512,NULL,1,NULL);
+	xTaskCreate(doBlinkIndicator,"ADA_CONTROL",512,NULL,1,NULL);
 	xTaskCreate(doBlinkMotion,"ADA_MOT_CONTROL",512,NULL,1,NULL);
 
 
@@ -188,10 +211,24 @@ size_t gHalo_ADA_Init(tHalo_Ctx* axpHCtx){
 }
 
 
-size_t gHalo_ADA_Show(size_t axhADA, tHalo_Msg* axpMsg){
+bool gHalo_ADA_Show(size_t axhADA, tHalo_Msg* axpMsg){
 	switch(axpMsg->xnSrc){
 		case (kHalo_MsgSrc_Mod_USS):
 		/** < from Ultra Sound */
+				switch(axpMsg->xUSS.xnWL){
+					case(kHalo_Mod_USS_WL_Warning):
+						buzz_warning();
+						break;
+					case(kHalo_Mod_USS_WL_Critical):
+						buzz_critical();
+						break;
+					case(kHalo_Mod_USS_WL_Safe):
+					    /** do nothing */
+					    break;
+					default:
+					    LOGE("unhandled msg at ADA; from USS\n");
+					    break;
+				}
 				break;
 		case(kHalo_MsgSrc_Mod_MAE):
 		/**< from MAE */
@@ -205,6 +242,9 @@ size_t gHalo_ADA_Show(size_t axhADA, tHalo_Msg* axpMsg){
 				case(kHalo_Mod_MAE_EV_Stopped):
 						trigger_stopped();
 						break;
+				default:
+				        LOGE("unhandled msg at ADA; from MAE\n");
+				    break;
 				}
 				break;
 		case(kHalo_MsgSrc_Mod_UIO):
@@ -216,31 +256,12 @@ size_t gHalo_ADA_Show(size_t axhADA, tHalo_Msg* axpMsg){
 				case(kHalo_Mod_UIO_EV_Right):
 					trigger_right();
 					break;
+				default:
+				    LOGE("unhandled msg at ADA; from UIO\n");
+				    break;
 			}
 		break;
 	}
 	return NULL;
-}
-
-
-
-void* xStartADA(){
-	adaUnit_t * pxADA = (adaUnit_t*) calloc (1,sizeof(adaUnit_t));
-	if (!pxADA)
-		return NULL;
-
-	/*
-	 *  Set the corresponding GPIO pins to be outputs.
-	 */
-	LPC_GPIO1->FIODIR |= (1 << LEFT_LED_CONTROL_GPIO)  | (1 << CENTRAL_LED_CONTROL_GPIO) | (1 << RIGHT_LED_CONTROL_GPIO);
-
-
-	// Create tasks here
-	/*
-	 * Two tasks, one for indicator and other for displaying
-	 * the motion of the cyclist.
-	 */
-	xTaskCreate(doBlinkIndicator,"ADA_CONTROL",512,NULL,1,NULL);
-	xTaskCreate(doBlinkMotion,"ADA_MOT_CONTROL",512,NULL,1,NULL);
 }
 
