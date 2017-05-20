@@ -49,10 +49,29 @@
  * Hardware configuration of
  * external LED interface to the helmet
  * for Board 2
+ *
+ * LED connections
+ * P0.29 - LEFT
+ * P0.30 - LEFT
+ *
+ * P0.0 - RIGHT
+ * P0.1 - RIGHT
+ *
+ * P2.6 - MOVING STATE
+ * P2.7 - MOVING STATE
+ *
  */
-#define LEFT_LED_CONTROL_GPIO    0
-#define CENTRAL_LED_CONTROL_GPIO 1
-#define RIGHT_LED_CONTROL_GPIO   4
+
+
+#define LEFT_LED_CONTROL_GPIO1    29
+#define LEFT_LED_CONTROL_GPIO2    30
+
+#define RIGHT_LED_CONTROL_GPIO1   0
+#define RIGHT_LED_CONTROL_GPIO2   1
+
+#define CENTRAL_LED_CONTROL_GPIO1 6
+#define CENTRAL_LED_CONTROL_GPIO2 7
+
 
 
 #define BLINK_MOVING 100
@@ -125,9 +144,9 @@ void trigger_right(){
  * LEDs for indicators
  */
 void blinkMe(uint32_t blinkThisPin){
-	LPC_GPIO1->FIOCLR = blinkThisPin;
+	LPC_GPIO0->FIOCLR = blinkThisPin;
 	delay_ms(50);
-	LPC_GPIO1->FIOSET = blinkThisPin;
+	LPC_GPIO0->FIOSET = blinkThisPin;
 	delay_ms(50);
 }
 
@@ -152,16 +171,18 @@ void doBlinkIndicator(void *p){
 			IS_LEFT_SET = false;
 		}
 
-		indicators = (IS_LEFT_SET << LEFT_LED_CONTROL_GPIO)  | (IS_RIGHT_SET << RIGHT_LED_CONTROL_GPIO);;
+		indicators = (IS_LEFT_SET << LEFT_LED_CONTROL_GPIO1)  | (IS_LEFT_SET << LEFT_LED_CONTROL_GPIO2)  | (IS_RIGHT_SET << RIGHT_LED_CONTROL_GPIO1) | (IS_RIGHT_SET << RIGHT_LED_CONTROL_GPIO2);
 		blinkMe(indicators);
 	}
 }
 
 
 void cautionLights(uint8_t blinkInThisSpeed){
-	LPC_GPIO1->FIOCLR = 1 << CENTRAL_LED_CONTROL_GPIO;
+	LPC_GPIO2->FIOCLR = 1 << CENTRAL_LED_CONTROL_GPIO1;
+    LPC_GPIO2->FIOCLR = 1 << CENTRAL_LED_CONTROL_GPIO2;
 	delay_ms(blinkInThisSpeed);
-	LPC_GPIO1->FIOSET = 1 << CENTRAL_LED_CONTROL_GPIO;
+	LPC_GPIO2->FIOSET = 1 << CENTRAL_LED_CONTROL_GPIO1;
+	LPC_GPIO2->FIOSET = 1 << CENTRAL_LED_CONTROL_GPIO2;
 	delay_ms(blinkInThisSpeed);
 }
 
@@ -196,7 +217,7 @@ size_t gHalo_ADA_Init(tHalo_Ctx* axpHCtx){
 
 	pxADA->xpCtx = axpHCtx;
 
-	LPC_GPIO1->FIODIR |= (1 << LEFT_LED_CONTROL_GPIO)  | (1 << CENTRAL_LED_CONTROL_GPIO) | (1 << RIGHT_LED_CONTROL_GPIO);
+	LPC_GPIO1->FIODIR |= (1 << LEFT_LED_CONTROL_GPIO1)  | (1 << LEFT_LED_CONTROL_GPIO2)  | (1 << CENTRAL_LED_CONTROL_GPIO1) |(1 << CENTRAL_LED_CONTROL_GPIO2) | (1 << RIGHT_LED_CONTROL_GPIO1) | (1 << RIGHT_LED_CONTROL_GPIO2);
 
 	// Create tasks here
 	/*

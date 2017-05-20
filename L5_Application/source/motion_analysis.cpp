@@ -64,6 +64,8 @@ void taskReadAS(void* p)
     memset(&pxMA->sReadings,0,sizeof(int16_t)*SECOND_WINDOW_SIZE);
 
 
+
+
     /*
      * Parameters to control the state machine
      * which detects slow-stop-moving states.
@@ -80,8 +82,8 @@ void taskReadAS(void* p)
      * determine state of the subject.
      */
     int16_t T_isSlowDown = -10;
-    int16_t T_remov_from_stuck = 1000;
-    int16_t T_ismoving_from_stop = 20;
+    int16_t T_remov_from_stuck = 10;
+    int16_t T_ismoving_from_stop = 40;
 
     /*
      * Confidence level parameters which
@@ -95,11 +97,23 @@ void taskReadAS(void* p)
      * Confidence thresholds
      */
     int16_t definitly_settling = 10;
-    int16_t definitly_settled = 5;
+    int16_t definitly_settled = 3;
     int16_t definitely_out_of_stop = 2;
 
     eHalo_Mod_MAE_Event myEvent = kHalo_Mod_MAE_EV_Invalid;
 
+
+    volatile uint16_t inMotioncnt = 0;
+    volatile uint16_t inStopcnt = 0;
+
+    /*
+     * De-bounce counter for state
+     * transition, post filtering phase.
+     */
+    uint8_t debounce_counter = 0;
+    uint16_t T_definately_state_change = 0;
+
+    uint8_t postFilterstate = 0;
 
     while(1)
     {
@@ -108,13 +122,16 @@ void taskReadAS(void* p)
     		/// -- Calibration phase --
 
     		/* Record N values and take the average of them */
+    		//pxMA->sFirstSmoothenedValue = moving_average_filter(&(pxMA->sFirstReadings[0]),x,WINDOW_SIZE);
     		pxMA->sCalReadings[counter]=x;
+
 
     		counter++;
     		LPC_GPIO1->FIOCLR = (1 << 0); // Calibration LED is ON
 
     		if(counter > CAL_ARR_SIZE){
     			pxMA->sCalibrationOffset = calibration(&(pxMA->sCalReadings[0]),CAL_ARR_SIZE);
+    			acc_at_settled = pxMA->sCalibrationOffset;
     			LPC_GPIO1->FIOSET = (1 << 0); // turn off calibration LED
     			IS_CALIBRATE = 0;
     			LPC_GPIO1->FIOCLR = (1 << 1) | (1 << 4) | (1 << 8);
@@ -122,6 +139,7 @@ void taskReadAS(void* p)
     			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 8) | (1 << 0);
     		}
     	} else {
+
     		/// -- Motion analysis phase --
 
     		x_after_cal = x - pxMA->sCalibrationOffset;
@@ -135,10 +153,73 @@ void taskReadAS(void* p)
     		xVal = pxMA->sSmoothenedValue;
 
     		switch(state){
+    		case 0:
+    			if (xVal < -15){
+    				inMotioncnt ++;
+    			} else {
+    				inMotioncnt = 0;
+    			}
+
+
+    			if (inMotioncnt > 5){
+    				inStopcnt =0;
+    				state = 1;
+    			}
+
+    			break;
+    		case 1:
+    			if (xVal > -5){
+    				inStopcnt++;
+    			}
+
+
+    			if (inStopcnt > 5){
+    				inMotioncnt = 0;
+    				state = 0;
+    			}
+
+    			break;
+    		}
+
+#if 0
+    		switch(state){
+    		case 0: // Stop or Slow down
+    			if (xVal > 10){
+    				inMotioncnt ++;
+    			} else {
+    				inMotioncnt = 0;
+    			}
+
+
+    			if (inMotioncnt > 3){
+    				inMotioncnt=0;
+    				state = 1;
+    			}
+    			break;
+
+    		case 2: // Motion
+    			if (xVal < -10){
+    				inStopcnt++;
+    			} else {
+    				inStopcnt=0;
+    			}
+
+    			if(inStopcnt > 3){
+    				inStopcnt=0;
+    				state = 0;
+    			}
+    			break;
+    		}
+
+#endif
+
+
+
+
+#if 0
+    		switch(state){
 
     		case 0:
-    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 8);
-    			LPC_GPIO1->FIOCLR = (1 << 0);
 
     			/// STOP
     			/** Reset any previous state parameters */
@@ -148,7 +229,7 @@ void taskReadAS(void* p)
     			/** In this state do this.. */
     			//u0_dbg_printf("STOP\n");
 
-    			if((xVal < acc_at_settled+3) && (xVal > acc_at_settled-3)){
+    			if((xVal < acc_at_settled+10) && (xVal > acc_at_settled-10)){
     				confidence_level_moving = 0;
     			} else {
     				confidence_level_moving = confidence_level_moving + 1;
@@ -157,7 +238,7 @@ void taskReadAS(void* p)
 
 
     			/** Condition for state transition */
-    			if (confidence_level_moving > definitely_out_of_stop){
+/*    			if (confidence_level_moving > definitely_out_of_stop){
     				if  (xVal > T_ismoving_from_stop){
     					state = 1;
     				}else{
@@ -165,12 +246,22 @@ void taskReadAS(void* p)
     						state = 2;
     					}
     				}
+    			}*/
+
+    			if (confidence_level_moving>definitely_out_of_stop){
+    				if( xVal > acc_at_settled+10){
+    					state = 1;
+    				} else {
+    					if (xVal < T_isSlowDown){
+    						state = 2;
+    					}
+    				}
     			}
+
+
     			myEvent = kHalo_Mod_MAE_EV_Stopped;
     			break;
     		case 1:
-    			LPC_GPIO1->FIOSET = (1 << 0) | (1 << 4) | (1 << 8);
-    			LPC_GPIO1->FIOCLR = (1 << 1);
 
     			/// MOVING
     			/** Reset any previous state parameters */
@@ -189,8 +280,6 @@ void taskReadAS(void* p)
     			myEvent = kHalo_Mod_MAE_EV_Moving;
     			break;
     		case 2:
-    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 0) | (1 << 8);
-    			LPC_GPIO1->FIOCLR = (1 << 4);
 
     			/// SLOW-DOWN
     			/** Reset any previous state parameters */
@@ -214,8 +303,6 @@ void taskReadAS(void* p)
     			break;
 
     		case 3:
-    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 0);
-    			LPC_GPIO1->FIOCLR = (1 << 8);
     			/// SLOW-DOWN-SETTLE
     			/** Reset any previous state parameters */
     			confidence_level_settling = 0;
@@ -245,24 +332,51 @@ void taskReadAS(void* p)
 
     		} // << state
 
+#endif
+
 
     		if(previous_state != state){
-    			tHalo_Msg myMsg;
-    			myMsg.xnSrc = kHalo_MsgSrc_Mod_MAE;
-    			myMsg.xMAE.xnEV = myEvent;
-    			LOGD("DEBUGME\n");
-    			if(!gHalo_MHI_BroadCast(pxMA->xpHCtx->xhMHI, &myMsg))
-    			{
-    			    LOGE("BCAST ERR!\n");
-    			}
-    			else
-    			{
-    			    LOGV("BCAST SUCCESS\n");
-    			}
-    			previous_state = state;
 
+    			debounce_counter ++;
+    			if(debounce_counter > T_definately_state_change){
+    				tHalo_Msg myMsg;
+    				myMsg.xnSrc = kHalo_MsgSrc_Mod_MAE;
+    				myMsg.xMAE.xnEV = myEvent;
+    				LOGD("DEBUGME\n");
 
+    				if(!gHalo_MHI_BroadCast(pxMA->xpHCtx->xhMHI, &myMsg))
+    				{
+    					LOGE("BCAST ERR!\n");
+    				}
+    				else
+    				{
+    					LOGV("BCAST SUCCESS\n");
+    				}
+
+    				postFilterstate = state;
+    			}
     		}
+    		previous_state = state;
+
+    		switch(postFilterstate){
+    		case 0:
+    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 0);
+    			LPC_GPIO1->FIOCLR = (1 << 8);
+    			break;
+    		case 1:
+    			LPC_GPIO1->FIOSET = (1 << 0) | (1 << 1) | (1 << 8);
+    			LPC_GPIO1->FIOCLR = (1 << 4);
+    			break;
+    		case 2:
+    			LPC_GPIO1->FIOSET = (1 << 4) | (1 << 0) | (1 << 8);
+    			LPC_GPIO1->FIOCLR = (1 << 1);
+    			break;
+    		case 3:
+    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 8);
+    			LPC_GPIO1->FIOCLR = (1 << 0);
+    			break;
+    		}
+
 
     	}
     	vTaskDelay(DELAY_BETWEEN_ACC_READS_TICKS);

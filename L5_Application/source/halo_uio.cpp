@@ -58,7 +58,7 @@ void isr_func(void)
         t1.reset(200);
         /* Process the interrupt */
         //while(!t1.expired());
-        LPC_GPIO2->FIOPIN ^= (0x1 << 8); // turning on left side led
+        //LPC_GPIO2->FIOPIN ^= (0x1 << 8); // turning on left side led
         // send this message to the queue.
         xQueueSendFromISR(dat.qh, &Uio_msg, &yield);
         // yielding interrupt service routine
@@ -80,11 +80,12 @@ void isr_func1(void)
         /* Process the interrupt */
         //while(!t1.expired());
         // yielding interrupt service routine
-        LPC_GPIO2->FIOPIN ^= (0x1 << 9);
+        //LPC_GPIO2->FIOPIN ^= (0x1 << 9);
 
         // send this message to the queue
         LOGD("DEBUGME\n");
         xQueueSendFromISR(dat.qh, &Uio_msg1, &yield);
+
         if(yield)
             portYIELD_FROM_ISR(yield);
     }
@@ -135,6 +136,18 @@ class halo_led:public scheduler_task
 
             // send the response to the Message Handler
             gHalo_MHI_BroadCast(xhMHI, &Uio_msg);
+
+            if (Uio_msg.xUIO.xnEV == kHalo_Mod_UIO_EV_Left){
+            	LPC_GPIO2->FIOCLR = (0x1 << 8);
+            	delay_ms(500);
+            	LPC_GPIO2->FIOSET = (0x1 << 8);
+            }
+
+            if(Uio_msg.xUIO.xnEV == kHalo_Mod_UIO_EV_Right){
+            	LPC_GPIO2->FIOCLR = (0x1 << 9);
+            	delay_ms(500);
+            	LPC_GPIO2->FIOSET = (0x1 << 9);
+            }
 
             return true;
         }

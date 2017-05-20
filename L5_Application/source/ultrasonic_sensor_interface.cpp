@@ -19,7 +19,7 @@
  */
 
 //#define DEBUG_E
-#define VERBOSE_E
+//#define VERBOSE_E
 #include "debug_e.h"
 #include <stdio.h>
 #include "ultrasonic_sensor_interface.hpp"
@@ -30,9 +30,11 @@
 #include "lpc_sys.h"
 #include "L2_Drivers/eint.h"
 
+#include "lpc_timers.h"
+
 /* Macro declration*/
 #define TRIGGER_CYCLE                 200                                   /*Trigger cycle for USS */
-#define CALCULATE_DISTANCE(duration)  (((float)duration*(float)(0.034/2)))  /* 340 m/s = 34000cm / 10^6 ms = 0. , so 0.034 cm per us*/
+#define CALCULATE_DISTANCE(duration)  ((((float)duration)*(float)(0.034/2)))  /* 340 m/s = 34000cm / 10^6 ms = 0. , so 0.034 cm per us*/
 
 static uint32_t pulseEndTime=0;
 static uint32_t pulseStartTime=0;
@@ -45,7 +47,11 @@ extern "C"
    void echo_raising_irq_callback(void)
    {
 	   LOGD("\n 1.echo_raising_irq_callback \n ");
+#if 0
 	   pulseStartTime=(unsigned int)sys_get_uptime_us();
+#else
+	   pulseStartTime = lpc_timer_get_value(lpc_timer0);
+#endif
 	   gotRising++;
 	   LOGV("DEBUGME\n");
    }
@@ -54,12 +60,16 @@ extern "C"
    void echo_falling_irq_callback(void)
      {
        long yield = 0;
+#if 0
   	   pulseEndTime=(unsigned int)sys_get_uptime_us();
+#else
+  	   pulseEndTime = lpc_timer_get_value(lpc_timer0);
+#endif
   	   LOGD("\n 2.Send end time to Queue \n ");
   	   if(NULL != scheduler_task::getSharedObject(shared_ultrasonicTimerQueue))
   	   {
   	       LOGV("DEBUGME\n");
-  	       if(gotRising > 1)
+  	       //if(gotRising > 1)
   	       {
   	           gotRising = 0;
   	           xQueueSendFromISR(scheduler_task::getSharedObject(shared_ultrasonicTimerQueue),&pulseEndTime, &yield);
@@ -101,7 +111,7 @@ USS_PeriodicTriggerTask::USS_PeriodicTriggerTask(uint8_t priority):scheduler_tas
 
 bool USS_PeriodicTriggerTask::init(void)
 {
-	LOGD("\n US_PeriodicTrigger init \n");
+	LOGV("\n US_PeriodicTrigger init \n");
 
 	/*Create Queue to receive command from EINT3 ISR to calculate Echo pulse width*/
 	mxUSSCmdQ = xQueueCreate(1,sizeof(uint32_t));
@@ -109,6 +119,8 @@ bool USS_PeriodicTriggerTask::init(void)
 	{
 		addSharedObject(shared_ultrasonicTimerQueue,mxUSSCmdQ);
 	}
+
+	lpc_timer_enable(lpc_timer0, 1);
 
 	/*Configure P2.3 as output to send Trigger pulse to USS Trigger pin*/
 	configurePortPin(2,3,gpio,output,pulldown,pushpull);
@@ -132,20 +144,21 @@ bool USS_PeriodicTriggerTask::run(void* p)
 
 	//if(mxTimerPeriodicTrigger.expired())
 	{
-		LOGD("\n 0.US_PeriodicTriggerTimer expired\n");
+		LOGV("\n 0.US_PeriodicTriggerTimer expired\n");
 
 		LPC_GPIO2->FIOSET= (1 << 3);
 		delay_us(10);
 		LPC_GPIO2->FIOCLR= (1 << 3);
 		sentTrigger = 1;
-
+		mstartTime = lpc_timer_get_value(lpc_timer0);
+		LOGE("DEBUGME %d\n", mstartTime);
 		if(xQueueReceive(mxUSSCmdQ,&(USS_PeriodicTriggerTask::mendTime),portMAX_DELAY))
 		{
         	LOGV("4.Received start & End time %d %d\n", pulseEndTime, pulseStartTime);
-			mEchoDuration = pulseEndTime - pulseStartTime;
+			mEchoDuration = mendTime - mstartTime;
 			LOGV("duration = %d\n", mEchoDuration);
 		    mdistance= CALCULATE_DISTANCE(mEchoDuration);
-		    LOGV("new distance = %fcm\n", mdistance);
+		    LOGD("new distance = %fcm\n", mdistance);
 		    if(runStateMachine())
 		    {
 
@@ -159,9 +172,9 @@ bool USS_PeriodicTriggerTask::run(void* p)
 		    }
 		}
 
-		LOGD("\n 6.Duration calculated = %ld "
-						"\n Distance = %f \n start=%ld \n end=%ld \n ",mEchoDuration,mdistance,pulseStartTime,pulseEndTime);
-
+		LOGE("\n 6.Duration calculated = %ld "
+						"\n Distance = %f \n start=%ld \n end=%ld mend=%d\n ",mEchoDuration,mdistance,pulseStartTime,pulseEndTime,mendTime);
+		mendTime = mstartTime = pulseEndTime = pulseStartTime = 0;
 		mxTimerPeriodicTrigger.restart();
 		vTaskDelay(TRIGGER_CYCLE);
 	}
