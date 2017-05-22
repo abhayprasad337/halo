@@ -73,6 +73,7 @@ void taskReadAS(void* p)
 
     /// Monitor post filter monitor state.
     uint8_t postFilterstate = 0;
+    uint8_t previousPostFilterState = 0;
 
 
     volatile uint8_t state = 0; /// Initializing the state to be in stop
@@ -208,70 +209,83 @@ void taskReadAS(void* p)
     		 * This acts as a post processing filter to
     		 * eliminate change in states rapidly.
     		 */
-    		if(previous_state != state){
 
-    			debounce_counter ++;
+    		if (previous_state == state){
+    			debounce_counter++;
+    		} else {
+    			debounce_counter = 0;
+    		}
 
-    			/// If debounce_counter exceeds limit, change the state
-    			if(debounce_counter > T_definately_state_change){
+    		if (debounce_counter > T_definately_state_change){
+    			debounce_counter = 0; /// Reset debounce counter.
+    			postFilterstate = state;
+    		}
 
-    				postFilterstate = state;
-    				debounce_counter = 0; /// Reset debounce counter.
+    		switch(postFilterstate){
+    		case 0:
+    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 0);
+    			LPC_GPIO1->FIOCLR = (1 << 8);
+    			break;
+    		case 1:
+    			LPC_GPIO1->FIOSET = (1 << 0) | (1 << 1) | (1 << 8);
+    			LPC_GPIO1->FIOCLR = (1 << 4);
+    			break;
+    		case 2:
+    			LPC_GPIO1->FIOSET = (1 << 4) | (1 << 0) | (1 << 8);
+    			LPC_GPIO1->FIOCLR = (1 << 1);
+    			break;
+    		case 3:
+    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 8);
+    			LPC_GPIO1->FIOCLR = (1 << 0);
+    			break;
+    		case 4:
+    			LPC_GPIO1->FIOSET = (1 << 4) | (1 << 0);
+    			LPC_GPIO1->FIOCLR = (1 << 1) | (1 << 8);
+    			break;
+    		}
 
+    		/*
+    		 * Send broad cast message only during state change.
+    		 */
+    		if (previousPostFilterState != postFilterstate){
 
-    				/*
-    				 * The actual post filtering process
-    				 * to update event triggers is done here.
-    				 */
-    	    		switch(postFilterstate){
-    	    		case 0:
-    	    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 0);
-    	    			LPC_GPIO1->FIOCLR = (1 << 8);
-    	    			myEvent = kHalo_Mod_MAE_EV_Stopped;
-    	    			break;
-    	    		case 1:
-    	    			LPC_GPIO1->FIOSET = (1 << 0) | (1 << 1) | (1 << 8);
-    	    			LPC_GPIO1->FIOCLR = (1 << 4);
-    	    			myEvent = kHalo_Mod_MAE_EV_Moving;
-    	    			break;
-    	    		case 2:
-    	    			LPC_GPIO1->FIOSET = (1 << 4) | (1 << 0) | (1 << 8);
-    	    			LPC_GPIO1->FIOCLR = (1 << 1);
-    	    			myEvent = kHalo_Mod_MAE_EV_Moving;
-    	    			break;
-    	    		case 3:
-    	    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 8);
-    	    			LPC_GPIO1->FIOCLR = (1 << 0);
-    	    			myEvent = kHalo_Mod_MAE_EV_Stopping;
-    	    			break;
-    	    		case 4:
-    	    			LPC_GPIO1->FIOSET = (1 << 4) | (1 << 0);
-    	    			LPC_GPIO1->FIOCLR = (1 << 1) | (1 << 8);
-    	    			myEvent = kHalo_Mod_MAE_EV_Stopped;
-    	    			break;
-    	    		}
+    			switch(postFilterstate){
+    			case 0:
+    				myEvent = kHalo_Mod_MAE_EV_Stopped;
+    				break;
+    			case 1:
+    				myEvent = kHalo_Mod_MAE_EV_Moving;
+    				break;
+    			case 2:
+    				myEvent = kHalo_Mod_MAE_EV_Moving;
+    				break;
+    			case 3:
+    				myEvent = kHalo_Mod_MAE_EV_Stopping;
+    				break;
+    			case 4:
+    				myEvent = kHalo_Mod_MAE_EV_Stopped;
+    				break;
+    			}
 
+    			/* Create message and broadcast */
+				tHalo_Msg myMsg;
+    			myMsg.xnSrc = kHalo_MsgSrc_Mod_MAE;
+    			myMsg.xMAE.xnEV = myEvent;
+    			LOGD("DEBUGME\n");
 
-    	    		/*
-    	    		 * Create message and broadcast
-    	    		 */
-    	    		tHalo_Msg myMsg;
-    	    		myMsg.xnSrc = kHalo_MsgSrc_Mod_MAE;
-    	    		myMsg.xMAE.xnEV = myEvent;
-    	    		LOGD("DEBUGME\n");
-
-    	    		if(!gHalo_MHI_BroadCast(pxMA->xpHCtx->xhMHI, &myMsg))
-    	    		{
-    	    			LOGE("BCAST ERR!\n");
-    	    		}
-    	    		else
-    	    		{
-    	    			LOGV("BCAST SUCCESS\n");
-    	    		}
+    			if(!gHalo_MHI_BroadCast(pxMA->xpHCtx->xhMHI, &myMsg))
+    			{
+    				LOGE("BCAST ERR!\n");
+    			}
+    			else
+    			{
+    				LOGV("BCAST SUCCESS\n");
     			}
     		}
 
     		previous_state = state;
+    		previousPostFilterState = postFilterstate;
+
 
     	}
     	/// Perform this task every 10ms
@@ -289,7 +303,7 @@ size_t gHalo_MAE_Init(tHalo_Ctx* axpHCtx){
 	/** Create motion analysis object */
 	tMotionAnalysis* pxMA = (tMotionAnalysis*)calloc(1, sizeof(tMotionAnalysis));
 	if(!pxMA)
-	        return (size_t)NULL;
+		return (size_t)NULL;
 
 	/** Object to share resources with glue logic */
 	pxMA->xpHCtx = axpHCtx;
