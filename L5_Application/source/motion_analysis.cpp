@@ -2,7 +2,7 @@
  * motion_analysis.cpp
  *
  *  Created on: Apr 9, 2017
- *      Author: unnik
+ *      Author: Abhay and Unni
  */
 
 
@@ -20,133 +20,154 @@
 #include "string.h"
 #include "utilities.h"
 #include "exp_halo_api.h"
+#include "storage.hpp"
 
 #define DELAY_BETWEEN_ACC_READS_TICKS 10 //100ms for SJ One
-
-/**
- * tick is RTOS System Tick Interrupt
- * configTICK_RATE_HZ; //the number of ticks in 1 second
- * portTICK_PERIOD_MS; //each tick shall happen in these many ms
- * So our System Tick Interrupt is 1ms configTICK_RATE_HZ=1000 (which is 1 tick in 1ms)
- */
 
 #define WINDOW_SIZE 100 // Size of window to perform moving average filtering
 #define SECOND_WINDOW_SIZE 30 // Size of window to perform moving average filtering the second time
 #define CAL_ARR_SIZE 300 // Number of values required to calibrate -> 1 second of data
 
 
-static int IS_CALIBRATE=1;
+static int IS_CALIBRATE=1; // Flag to monitor calibration phase.
 
 typedef struct
 {
-    TaskHandle_t xRdAcc;
-    int16_t sFirstReadings[WINDOW_SIZE];
-    int16_t sReadings[SECOND_WINDOW_SIZE];
-    int16_t sFirstSmoothenedValue;
-    int16_t sSmoothenedValue;
-    int16_t sCalReadings[CAL_ARR_SIZE];
-    int16_t sCalibrationOffset=0;
-    tHalo_Ctx* xpHCtx;
-
+    TaskHandle_t xRdAcc; /// Task handler for MAE
+    int16_t sFirstReadings[WINDOW_SIZE]; /// Creating fist smoothening filter
+    int16_t sReadings[SECOND_WINDOW_SIZE]; /// Creating second smoothening filter
+    int16_t sFirstSmoothenedValue; /// Scalar first smoothened value
+    int16_t sSmoothenedValue; /// Scalar second smoothened value
+    int16_t sCalReadings[CAL_ARR_SIZE]; /// Creating calibration array
+    int16_t sCalibrationOffset=0; /// Calibration value
+    tHalo_Ctx* xpHCtx; /// Linker object to glue code
 }tMotionAnalysis;
 
 
 void taskReadAS(void* p)
 {
-    tMotionAnalysis* pxMA = (tMotionAnalysis*)p;
-    int16_t x=0;
-    int16_t x_after_cal=0;
-	static int counter = 0;
-    int16_t xVal;
 
-    // Initialize moving_average_filter readings to 0.
+
+    tMotionAnalysis* pxMA = (tMotionAnalysis*)p;
+
+    int16_t x=0; /// X-axis value read from accelerometer
+    int16_t x_after_cal=0; /// X-axis value after calibration offset
+    int16_t xVal=0; /// X-axis acceleration value which gets evaluated in the state machine
+	static int counter = 0; // To monitor calibration
+
+
+    /// Initialize moving_average_filters to 0.
     memset(&pxMA->sFirstReadings,0,sizeof(int16_t)*WINDOW_SIZE);
     memset(&pxMA->sReadings,0,sizeof(int16_t)*SECOND_WINDOW_SIZE);
 
-
-
-
-    /*
-     * Parameters to control the state machine
-     * which detects slow-stop-moving states.
-     */
-    volatile uint8_t state = 0; // Initializing the state to be in stop
-    volatile uint8_t previous_state=0;
-
-    volatile int16_t prev_acc = -1000;
-    volatile int16_t acc_at_settled = 30;
-    volatile int16_t hit_bottom_slow_acc= 0;
-    volatile int16_t remove_from_stuck = 0;
-    /*
-     * Weak thresholds that help to
-     * determine state of the subject.
-     */
-    int16_t T_isSlowDown = -10;
-    int16_t T_remov_from_stuck = 10;
-    int16_t T_ismoving_from_stop = 40;
-
-    /*
-     * Confidence level parameters which
-     * help in deciding the state transitions.
-     */
-    int16_t confidence_level_settling = 0;
-    int16_t confidence_level_settled = 0;
-    int16_t confidence_level_moving = 0;
-
-    /*
-     * Confidence thresholds
-     */
-    int16_t definitly_settling = 10;
-    int16_t definitly_settled = 3;
-    int16_t definitely_out_of_stop = 2;
-
+    /// Create event to pass through the glue logic
     eHalo_Mod_MAE_Event myEvent = kHalo_Mod_MAE_EV_Invalid;
 
-
-    volatile uint16_t inMotioncnt = 0;
-    volatile uint16_t inStopcnt = 0;
 
     /*
      * De-bounce counter for state
      * transition, post filtering phase.
      */
     uint8_t debounce_counter = 0;
-    uint16_t T_definately_state_change = 0;
+    uint16_t T_definately_state_change = 4;
 
+    /// Monitor post filter monitor state.
     uint8_t postFilterstate = 0;
+
+
+    volatile uint8_t state = 0; /// Initializing the state to be in stop
+    volatile uint8_t previous_state=0; /// Monitor previous state to implement debounce
 
     while(1)
     {
-    	x = AS.getX();
+    	x = AS.getX(); /// Read x-axis accelerometer reading
+
     	if (IS_CALIBRATE){
     		/// -- Calibration phase --
 
-    		/* Record N values and take the average of them */
-    		//pxMA->sFirstSmoothenedValue = moving_average_filter(&(pxMA->sFirstReadings[0]),x,WINDOW_SIZE);
+    		/* *
+    		 * Recording N x-axis accelerometer
+    		 * readings for calibration.
+    		 */
     		pxMA->sCalReadings[counter]=x;
 
 
     		counter++;
-    		LPC_GPIO1->FIOCLR = (1 << 0); // Calibration LED is ON
+
+    		// Indicate calibration
+    		LPC_GPIO1->FIOCLR = (1 << 0);
+
 
     		if(counter > CAL_ARR_SIZE){
+    			/// If calibration array if filled,
+    			/// perform calibration.
     			pxMA->sCalibrationOffset = calibration(&(pxMA->sCalReadings[0]),CAL_ARR_SIZE);
-    			acc_at_settled = pxMA->sCalibrationOffset;
-    			LPC_GPIO1->FIOSET = (1 << 0); // turn off calibration LED
+
+    			/// Turn off calibration flag
     			IS_CALIBRATE = 0;
+
+    			/**
+    			 * LED indication to monitor
+    			 * indicate calibration completion.
+    			 */
+    			LPC_GPIO1->FIOSET = (1 << 0); // turn off calibration LED
+
     			LPC_GPIO1->FIOCLR = (1 << 1) | (1 << 4) | (1 << 8);
-    			delay_ms(500);
+    			delay_ms(100);
+
     			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 8) | (1 << 0);
     		}
     	} else {
 
     		/// -- Motion analysis phase --
 
-    		x_after_cal = x - pxMA->sCalibrationOffset;
-    		pxMA->sFirstSmoothenedValue = moving_average_filter(&(pxMA->sFirstReadings[0]),x_after_cal,WINDOW_SIZE);
-    		pxMA->sSmoothenedValue = moving_average_filter(&(pxMA->sReadings[0]),pxMA->sFirstSmoothenedValue,SECOND_WINDOW_SIZE);
+    		x_after_cal = x - pxMA->sCalibrationOffset; /// Compute acceleration after considering calibration offset
+    		pxMA->sFirstSmoothenedValue = moving_average_filter(&(pxMA->sFirstReadings[0]),x_after_cal,WINDOW_SIZE); /// First smoothened value
+    		pxMA->sSmoothenedValue = moving_average_filter(&(pxMA->sReadings[0]),pxMA->sFirstSmoothenedValue,SECOND_WINDOW_SIZE); /// Second smoothened value
 
+    		xVal = pxMA->sSmoothenedValue;  /// Evaluating on xVal
 
+    		/// Start state machine.
+    		switch (state){
+    		case 0:
+    			///---- STOP ----
+    			if (xVal > 20){
+    				state = 1;
+    			}
+    			break;
+    		case 1:
+    			///---- MOVING ----
+    			if (xVal < 10){
+    				state = 2;
+    			}
+    			break;
+    		case 2:
+    			///---- META STABLE 1 ----
+    			if (xVal < -20){
+    				state = 3;
+    			}
+    			if (xVal > 20){
+    				state = 1;
+    			}
+    			break;
+    		case 3:
+    			///---- SLOWDOWN ----
+    			if (xVal > -10){
+    				state = 4;
+    			}
+    			break;
+    		case 4:
+    			///---- META STABLE ----
+    			if (xVal > 20){
+    				state = 1;
+    			}
+    			if (xVal < -10){
+    				state = 3;
+    			}
+    			break;
+    		}
+
+#if 0
     		/// Perform motion and slow down detection.
     		/// This has to be changed to pxMA->sSmoothenedValue.
     		/// This is because the algorithm thresholds have been set for this type of configuration.
@@ -181,204 +202,79 @@ void taskReadAS(void* p)
     			break;
     		}
 
-#if 0
-    		switch(state){
-    		case 0: // Stop or Slow down
-    			if (xVal > 10){
-    				inMotioncnt ++;
-    			} else {
-    				inMotioncnt = 0;
-    			}
-
-
-    			if (inMotioncnt > 3){
-    				inMotioncnt=0;
-    				state = 1;
-    			}
-    			break;
-
-    		case 2: // Motion
-    			if (xVal < -10){
-    				inStopcnt++;
-    			} else {
-    				inStopcnt=0;
-    			}
-
-    			if(inStopcnt > 3){
-    				inStopcnt=0;
-    				state = 0;
-    			}
-    			break;
-    		}
-
 #endif
 
-
-
-
-#if 0
-    		switch(state){
-
-    		case 0:
-
-    			/// STOP
-    			/** Reset any previous state parameters */
-    			confidence_level_settled = 0;
-    			remove_from_stuck = 0;
-
-    			/** In this state do this.. */
-    			//u0_dbg_printf("STOP\n");
-
-    			if((xVal < acc_at_settled+10) && (xVal > acc_at_settled-10)){
-    				confidence_level_moving = 0;
-    			} else {
-    				confidence_level_moving = confidence_level_moving + 1;
-    			}
-    			prev_acc = xVal;
-
-
-    			/** Condition for state transition */
-/*    			if (confidence_level_moving > definitely_out_of_stop){
-    				if  (xVal > T_ismoving_from_stop){
-    					state = 1;
-    				}else{
-    					if (xVal < T_isSlowDown){
-    						state = 2;
-    					}
-    				}
-    			}*/
-
-    			if (confidence_level_moving>definitely_out_of_stop){
-    				if( xVal > acc_at_settled+10){
-    					state = 1;
-    				} else {
-    					if (xVal < T_isSlowDown){
-    						state = 2;
-    					}
-    				}
-    			}
-
-
-    			myEvent = kHalo_Mod_MAE_EV_Stopped;
-    			break;
-    		case 1:
-
-    			/// MOVING
-    			/** Reset any previous state parameters */
-    			confidence_level_moving = 0;
-
-    			/** In this state do this.. */
-    			//u0_dbg_printf("MOVING\n");
-
-    			/** Condition for state transition */
-    			if (xVal < T_isSlowDown){
-    				hit_bottom_slow_acc = 0;
-    				prev_acc = xVal;
-    				state = 2;
-    			}
-
-    			myEvent = kHalo_Mod_MAE_EV_Moving;
-    			break;
-    		case 2:
-
-    			/// SLOW-DOWN
-    			/** Reset any previous state parameters */
-
-    			/** In this state do this.. */
-    			//u0_dbg_printf("SLOW_DOWN\n");
-
-    			if (xVal > prev_acc){
-    				confidence_level_settling = confidence_level_settling + 1;
-    			}else {
-    				confidence_level_settling = 0;
-    			}
-    			prev_acc = xVal;
-
-    			/** Condition for state transition */
-    			if (confidence_level_settling > definitly_settling){
-    				hit_bottom_slow_acc = xVal;
-    				state = 3;
-    			}
-    			myEvent = kHalo_Mod_MAE_EV_Stopping;
-    			break;
-
-    		case 3:
-    			/// SLOW-DOWN-SETTLE
-    			/** Reset any previous state parameters */
-    			confidence_level_settling = 0;
-
-    			/** In this state do this.. */
-    			//u0_dbg_printf("SLOW_SETTLE\n");
-
-    			if (xVal < prev_acc){
-    				confidence_level_settled += confidence_level_settled;
-    			}else {
-    				confidence_level_settled = 0;
-    				remove_from_stuck ++;
-    			}
-    			prev_acc = xVal;
-
-    			/** Condition for state transition */
-    			if (confidence_level_settled > definitly_settled || remove_from_stuck > T_remov_from_stuck){
-    				acc_at_settled = xVal-3;
-    				state = 0;
-    			}
-
-    			if (hit_bottom_slow_acc > -50){
-    				state = 1;
-    			}
-    			myEvent = kHalo_Mod_MAE_EV_Stopping; // Settling is considered as a stop itself
-    			break;
-
-    		} // << state
-
-#endif
-
-
+    		/*
+    		 * This acts as a post processing filter to
+    		 * eliminate change in states rapidly.
+    		 */
     		if(previous_state != state){
 
     			debounce_counter ++;
-    			if(debounce_counter > T_definately_state_change){
-    				tHalo_Msg myMsg;
-    				myMsg.xnSrc = kHalo_MsgSrc_Mod_MAE;
-    				myMsg.xMAE.xnEV = myEvent;
-    				LOGD("DEBUGME\n");
 
-    				if(!gHalo_MHI_BroadCast(pxMA->xpHCtx->xhMHI, &myMsg))
-    				{
-    					LOGE("BCAST ERR!\n");
-    				}
-    				else
-    				{
-    					LOGV("BCAST SUCCESS\n");
-    				}
+    			/// If debounce_counter exceeds limit, change the state
+    			if(debounce_counter > T_definately_state_change){
 
     				postFilterstate = state;
+    				debounce_counter = 0; /// Reset debounce counter.
+
+
+    				/*
+    				 * The actual post filtering process
+    				 * to update event triggers is done here.
+    				 */
+    	    		switch(postFilterstate){
+    	    		case 0:
+    	    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 0);
+    	    			LPC_GPIO1->FIOCLR = (1 << 8);
+    	    			myEvent = kHalo_Mod_MAE_EV_Stopped;
+    	    			break;
+    	    		case 1:
+    	    			LPC_GPIO1->FIOSET = (1 << 0) | (1 << 1) | (1 << 8);
+    	    			LPC_GPIO1->FIOCLR = (1 << 4);
+    	    			myEvent = kHalo_Mod_MAE_EV_Moving;
+    	    			break;
+    	    		case 2:
+    	    			LPC_GPIO1->FIOSET = (1 << 4) | (1 << 0) | (1 << 8);
+    	    			LPC_GPIO1->FIOCLR = (1 << 1);
+    	    			myEvent = kHalo_Mod_MAE_EV_Moving;
+    	    			break;
+    	    		case 3:
+    	    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 8);
+    	    			LPC_GPIO1->FIOCLR = (1 << 0);
+    	    			myEvent = kHalo_Mod_MAE_EV_Stopping;
+    	    			break;
+    	    		case 4:
+    	    			LPC_GPIO1->FIOSET = (1 << 4) | (1 << 0);
+    	    			LPC_GPIO1->FIOCLR = (1 << 1) | (1 << 8);
+    	    			myEvent = kHalo_Mod_MAE_EV_Stopped;
+    	    			break;
+    	    		}
+
+
+    	    		/*
+    	    		 * Create message and broadcast
+    	    		 */
+    	    		tHalo_Msg myMsg;
+    	    		myMsg.xnSrc = kHalo_MsgSrc_Mod_MAE;
+    	    		myMsg.xMAE.xnEV = myEvent;
+    	    		LOGD("DEBUGME\n");
+
+    	    		if(!gHalo_MHI_BroadCast(pxMA->xpHCtx->xhMHI, &myMsg))
+    	    		{
+    	    			LOGE("BCAST ERR!\n");
+    	    		}
+    	    		else
+    	    		{
+    	    			LOGV("BCAST SUCCESS\n");
+    	    		}
     			}
     		}
+
     		previous_state = state;
 
-    		switch(postFilterstate){
-    		case 0:
-    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 0);
-    			LPC_GPIO1->FIOCLR = (1 << 8);
-    			break;
-    		case 1:
-    			LPC_GPIO1->FIOSET = (1 << 0) | (1 << 1) | (1 << 8);
-    			LPC_GPIO1->FIOCLR = (1 << 4);
-    			break;
-    		case 2:
-    			LPC_GPIO1->FIOSET = (1 << 4) | (1 << 0) | (1 << 8);
-    			LPC_GPIO1->FIOCLR = (1 << 1);
-    			break;
-    		case 3:
-    			LPC_GPIO1->FIOSET = (1 << 1) | (1 << 4) | (1 << 8);
-    			LPC_GPIO1->FIOCLR = (1 << 0);
-    			break;
-    		}
-
-
     	}
+    	/// Perform this task every 10ms
     	vTaskDelay(DELAY_BETWEEN_ACC_READS_TICKS);
     }
 }
